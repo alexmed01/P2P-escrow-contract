@@ -1,6 +1,3 @@
-;;P2P-ESCROW-Contract
-;;A peer-to-peer escrow smart contract that holds funds securely between two parties until predetermined conditions are met, enabling trustless transactions without intermediaries.
-
 ;; Error codes
 (define-constant ERR-NOT-AUTHORIZED (err u401))
 (define-constant ERR-NOT-FOUND (err u404))
@@ -42,7 +39,7 @@
   {
     total-transactions: uint,
     successful-transactions: uint,
-   disputed-transactions: uint,
+    disputed-transactions: uint,
     total-volume: uint,
     average-rating: uint
   }
@@ -57,3 +54,120 @@
   )
 )
 
+;; Read-only functions
+(define-read-only (get-admin)
+  (var-get admin-address)
+)
+
+(define-read-only (get-escrow (escrow-id uint))
+  (map-get? escrows escrow-id)
+)
+
+(define-read-only (get-user-stats (user principal))
+  (map-get? user-stats user)
+)
+
+(define-read-only (get-next-escrow-id)
+  (var-get next-escrow-id)
+)
+
+;; Private helper functions
+(define-private (update-user-stats (user principal) (amount uint))
+  (let
+    (
+      (existing-stats (default-to
+        {
+          total-transactions: u0,
+          successful-transactions: u0,
+          disputed-transactions: u0,
+          total-volume: u0,
+          average-rating: u0
+        }
+        (map-get? user-stats user)
+      ))
+    )
+    (map-set user-stats user
+      (merge existing-stats {
+        total-transactions: (+ (get total-transactions existing-stats) u1),
+        total-volume: (+ (get total-volume existing-stats) amount)
+      })
+    )
+  )
+)
+
+(define-private (update-success-stats (user principal))
+  (let
+    (
+      (existing-stats (default-to
+        {
+          total-transactions: u0,
+          successful-transactions: u0,
+          disputed-transactions: u0,
+          total-volume: u0,
+          average-rating: u0
+        }
+        (map-get? user-stats user)
+      ))
+    )
+    (map-set user-stats user
+      (merge existing-stats {
+        successful-transactions: (+ (get successful-transactions existing-stats) u1)
+      })
+    )
+  )
+)
+
+(define-private (update-dispute-stats (user principal))
+  (let
+    (
+      (existing-stats (default-to
+        {
+          total-transactions: u0,
+          successful-transactions: u0,
+          disputed-transactions: u0,
+          total-volume: u0,
+          average-rating: u0
+        }
+        (map-get? user-stats user)
+      ))
+    )
+    (map-set user-stats user
+      (merge existing-stats {
+        disputed-transactions: (+ (get disputed-transactions existing-stats) u1)
+      })
+    )
+  )
+)
+
+;; Create escrow with timeout
+(define-public (create-escrow (buyer principal) (amount uint) (timeout uint))
+  (let
+    (
+      (escrow-id (var-get next-escrow-id))
+      (creation-block block-height)
+      (expiration-block (+ block-height timeout))
+    )
+    (asserts! (> amount u0) ERR-INSUFFICIENT-AMOUNT)
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+    
+    (map-set escrows escrow-id
+      {
+        seller: tx-sender,
+        buyer: buyer,
+        amount: amount,
+        status: "pending",
+        creation-time: creation-block,
+        expiration-time: expiration-block,
+        dispute-reason: none,
+        rating: none
+      }
+    )
+    
+    ;; Update user stats
+    (update-user-stats tx-sender amount)
+    (update-user-stats buyer u0)
+    
+    (var-set next-escrow-id (+ escrow-id u1))
+    (ok escrow-id)
+  )
+)
