@@ -228,3 +228,55 @@
     (ok true)
   )
 )
+;; Resolve dispute (admin only)
+(define-public (resolve-dispute (escrow-id uint) (refund-percentage uint))
+  (let
+    (
+      (escrow (unwrap! (map-get? escrows escrow-id) ERR-NOT-FOUND))
+      (fee (/ (* (get amount escrow) ESCROW-FEE) u10000))
+      (refund-amount (/ (* (get amount escrow) refund-percentage) u100))
+      (seller-amount (- (- (get amount escrow) refund-amount) fee))
+    )
+    (asserts! (is-eq tx-sender (var-get admin-address)) ERR-NOT-AUTHORIZED)
+    (asserts! (is-eq (get status escrow) "disputed") ERR-INVALID-STATUS)
+    (asserts! (<= refund-percentage u100) ERR-INVALID-PERCENTAGE)
+    
+    (if (> refund-amount u0)
+      (try! (as-contract (stx-transfer? refund-amount tx-sender (get buyer escrow))))
+      true
+    )
+    
+    (if (> seller-amount u0)
+      (try! (as-contract (stx-transfer? seller-amount tx-sender (get seller escrow))))
+      true
+    )
+    
+    (try! (as-contract (stx-transfer? fee tx-sender CONTRACT-OWNER)))
+    
+    (map-set escrows escrow-id
+      (merge escrow { status: "resolved" })
+    )
+    
+    (ok true)
+  )
+)
+
+;; Cancel expired escrow (refund to seller)
+(define-public (cancel-expired-escrow (escrow-id uint))
+  (let
+    (
+      (escrow (unwrap! (map-get? escrows escrow-id) ERR-NOT-FOUND))
+    )
+    (asserts! (is-eq (get status escrow) "pending") ERR-INVALID-STATUS)
+    (asserts! (>= block-height (get expiration-time escrow)) ERR-NOT-AUTHORIZED)
+    (asserts! (or (is-eq tx-sender (get seller escrow)) (is-eq tx-sender (var-get admin-address))) ERR-NOT-AUTHORIZED)
+    
+    (try! (as-contract (stx-transfer? (get amount escrow) tx-sender (get seller escrow))))
+    
+    (map-set escrows escrow-id
+      (merge escrow { status: "cancelled" })
+    )
+    
+    (ok true)
+  )
+)
