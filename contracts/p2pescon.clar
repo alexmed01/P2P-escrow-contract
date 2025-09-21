@@ -171,3 +171,60 @@
     (ok escrow-id)
   )
 )
+;; Release escrow without rating (backward compatibility)
+(define-public (release-escrow-simple (escrow-id uint))
+  (release-escrow escrow-id u0)
+)
+
+;; Release escrow with rating
+(define-public (release-escrow (escrow-id uint) (rating uint))
+  (let
+    (
+      (escrow (unwrap! (map-get? escrows escrow-id) ERR-NOT-FOUND))
+      (fee (/ (* (get amount escrow) ESCROW-FEE) u10000))
+    )
+    (asserts! (is-eq (get status escrow) "pending") ERR-INVALID-STATUS)
+    (asserts! (is-eq tx-sender (get buyer escrow)) ERR-NOT-AUTHORIZED)
+    (asserts! (<= rating MAX-RATING) ERR-INVALID-RATING)
+    (asserts! (< block-height (get expiration-time escrow)) ERR-EXPIRED)
+    
+    (try! (as-contract (stx-transfer? (- (get amount escrow) fee) tx-sender (get seller escrow))))
+    (try! (as-contract (stx-transfer? fee tx-sender CONTRACT-OWNER)))
+    
+    (map-set escrows escrow-id
+      (merge escrow {
+        status: "completed",
+        rating: (if (> rating u0) (some rating) none)
+      })
+    )
+    
+    ;; Update success stats
+    (update-success-stats (get seller escrow))
+    (update-success-stats (get buyer escrow))
+    
+    (ok true)
+  )
+)
+
+;; Initiate dispute
+(define-public (dispute-escrow (escrow-id uint) (reason (string-utf8 500)))
+  (let
+    (
+      (escrow (unwrap! (map-get? escrows escrow-id) ERR-NOT-FOUND))
+    )
+    (asserts! (is-eq (get status escrow) "pending") ERR-INVALID-STATUS)
+   (asserts! (or (is-eq tx-sender (get buyer escrow)) (is-eq tx-sender (get seller escrow))) ERR-NOT-AUTHORIZED)
+    
+    (map-set escrows escrow-id
+      (merge escrow {
+        status: "disputed",
+        dispute-reason: (some reason)
+      })
+    )
+  ;; Update dispute stats
+    (update-dispute-stats (get seller escrow))
+    (update-dispute-stats (get buyer escrow))
+    
+    (ok true)
+  )
+)
